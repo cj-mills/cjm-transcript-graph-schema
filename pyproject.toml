@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = []
+dependencies = ['cjm-context-graph-layer>=0.0.1', 'cjm-context-graph-primitives>=0.0.7']
 
 [project.urls]
 Repository = "https://github.com/cj-mills/cjm-transcript-graph-schema"
@@ -28,6 +28,6 @@ cjm_transcript_graph_schema = "cjm_transcript_graph_schema._modidx:d"
 version = {attr = "cjm_transcript_graph_schema.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["cjm_transcript_graph_schema"]
+include = ["cjm_transcript_graph_schema*"]
 
 [tool.nbdev]
