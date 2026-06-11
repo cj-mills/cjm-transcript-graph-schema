@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cjm-transcript-graph-schema"
+dynamic = ["version"]
+description = "Audio-transcript layer schema for context graphs: Source, AudioSegment, Transcript, and Segment nodes with deterministic identity tuples and graph-node mapping, shared by the transcription, decomposition, and correction workflow cores."
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+authors = [{name = "Christian J. Mills", email = "9126128+cj-mills@users.noreply.github.com"}]
+keywords = ['nbdev']
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/cj-mills/cjm-transcript-graph-schema"
+Documentation = "https://cj-mills.github.io/cjm-transcript-graph-schema/"
+
+[project.entry-points.nbdev]
+cjm_transcript_graph_schema = "cjm_transcript_graph_schema._modidx:d"
+
+[tool.setuptools.dynamic]
+version = {attr = "cjm_transcript_graph_schema.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["cjm_transcript_graph_schema"]
+
+[tool.nbdev]

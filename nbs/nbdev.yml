@@ -1,0 +1,9 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "cjm-transcript-graph-schema"
+  site-url: "https://cj-mills.github.io/cjm-transcript-graph-schema"
+  description: "Audio-transcript layer schema for context graphs: Source, AudioSegment, Transcript, and Segment nodes with deterministic identity tuples and graph-node mapping, shared by the transcription, decomposition, and correction workflow cores."
+  repo-branch: main
+  repo-url: "https://github.com/cj-mills/cjm-transcript-graph-schema"
