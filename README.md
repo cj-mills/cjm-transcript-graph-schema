@@ -12,7 +12,7 @@ pip install cjm_transcript_graph_schema
 ## Project Structure
 
     nbs/
-    └── schema.ipynb # The audio-transcript layer schema (where-graph-begins locked layer schema): `Source -> AudioSegment(coarse, owns the model-input WAV) -> Transcript(per-transcriber variants)` emitted by transcription, extended with the fine `Segment` spine by decomposition. Deterministic identity tuples per the stage-5 ratified rule; `Document` from the pre-CR-18 era dissolves into `Source`.
+    └── schema.ipynb # The audio-transcript layer schema (where-graph-begins locked layer schema): `Source -> AudioSegment(coarse boundary) -> AudioRendition(model-input: raw | vocals | …) -> Transcript(per-transcriber variants)` emitted by transcription, extended with the fine `Segment` spine (per-rendition) by decomposition. Deterministic identity tuples per the stage-5 ratified rule; the `AudioRendition` node lets raw + preprocessed model-inputs of one boundary coexist in one graph. `Document` from the pre-CR-18 era dissolves into `Source`.
 
 Total: 1 notebook
 
@@ -37,10 +37,12 @@ Detailed documentation for each module in the project:
 
 > The audio-transcript layer schema (where-graph-begins locked layer
 > schema):
-> `Source -> AudioSegment(coarse, owns the model-input WAV) -> Transcript(per-transcriber variants)`
-> emitted by transcription, extended with the fine `Segment` spine by
-> decomposition. Deterministic identity tuples per the stage-5 ratified
-> rule; `Document` from the pre-CR-18 era dissolves into `Source`.
+> `Source -> AudioSegment(coarse boundary) -> AudioRendition(model-input: raw | vocals | …) -> Transcript(per-transcriber variants)`
+> emitted by transcription, extended with the fine `Segment` spine
+> (per-rendition) by decomposition. Deterministic identity tuples per
+> the stage-5 ratified rule; the `AudioRendition` node lets raw +
+> preprocessed model-inputs of one boundary coexist in one graph.
+> `Document` from the pre-CR-18 era dissolves into `Source`.
 
 #### Import
 
@@ -49,10 +51,12 @@ from cjm_transcript_graph_schema.schema import (
     TranscriptGraphLabels,
     source_node_id,
     audio_segment_node_id,
+    audio_rendition_node_id,
     transcript_node_id,
     segment_node_id,
     SourceNode,
     AudioSegmentNode,
+    AudioRenditionNode,
     TranscriptNode,
     TranscriptSliceRef,
     SegmentNode
@@ -77,36 +81,60 @@ def audio_segment_node_id(
     """
     AudioSegment identity = (source, boundary range).
     
-    Conversion-config-independent: the model-input WAV is payload/provenance,
-    not identity — the boundary computation is pure and deterministic, so
-    re-derivation reproduces the id.
+    Rendition-independent by design: an AudioSegment is a BOUNDARY of the source
+    (an audio fact), shared across every model-input rendition of it. The
+    boundary computation is pure and deterministic, so re-derivation reproduces
+    the id; the model-input WAV lives on the `AudioRendition` child, not here.
+    """
+```
+
+``` python
+def audio_rendition_node_id(
+    audio_segment_id: str,  # Owning AudioSegment node id
+    chain: List[str],       # Ordered preprocessing-chain descriptors; [] = the raw convert-only rendition
+) -> str:  # Deterministic AudioRendition node id
+    """
+    AudioRendition identity = (audio segment, preprocessing chain).
+    
+    A rendition is one model-input audio OF an AudioSegment. The chain is the
+    ordered list of preprocessing steps that produced it (each an opaque
+    descriptor string, e.g. ``"source_separation:cjm-media-plugin-demucs@<cfg>"``);
+    an EMPTY chain is the raw convert-only rendition, whose id is therefore
+    stable and chain-free. The universal 16k-mono resample is implicit (not a
+    chain step) — so raw + vocals are distinct renditions under one shared
+    AudioSegment, and the layer's identity-mismatch check never collides them.
+    Re-derivable from the manifest chain alone (extenders recompute, never
+    search).
     """
 ```
 
 ``` python
 def transcript_node_id(
-    audio_segment_id: str,  # Owning AudioSegment node id
-    transcriber: str,       # Transcriber capability name (e.g. "cjm-transcription-plugin-whisper")
-    config_hash: str,       # Transcriber config hash
+    rendition_id: str,  # Owning AudioRendition node id
+    transcriber: str,   # Transcriber capability name (e.g. "cjm-transcription-plugin-whisper")
+    config_hash: str,   # Transcriber config hash
 ) -> str:  # Deterministic Transcript node id
     """
-    Transcript identity = (audio segment, transcriber, config) — MIRRORS the
+    Transcript identity = (audio rendition, transcriber, config) — MIRRORS the
     capability cache key UNIQUE(audio_path, config_hash), so the graph node is
-    the durable face of the cached row (the structural E13 fix).
+    the durable face of the cached row (the structural E13 fix). Keyed on the
+    RENDITION, so a raw vs vocals transcript of the same boundary are distinct.
     """
 ```
 
 ``` python
 def segment_node_id(
-    audio_segment_id: str,  # Owning AudioSegment node id
-    vad_config_hash: str,   # VAD capability config hash (skeleton identity input)
-    chunk_start: float,     # VAD chunk start (chunk-local seconds within the AudioSegment)
-    chunk_end: float,       # VAD chunk end (chunk-local seconds)
+    rendition_id: str,     # Owning AudioRendition node id
+    vad_config_hash: str,  # VAD capability config hash (skeleton identity input)
+    chunk_start: float,    # VAD chunk start (chunk-local seconds within the rendition WAV)
+    chunk_end: float,      # VAD chunk end (chunk-local seconds)
 ) -> str:  # Deterministic Segment node id
     """
-    Fine Segment identity = audio-side only (audio segment, VAD config, chunk
+    Fine Segment identity = audio-side only (audio rendition, VAD config, chunk
     range) — so the skeleton's ids are SHARED across transcribers by
-    construction (C4 "store agreement once" falls out of identity design).
+    construction (C4 "store agreement once" falls out of identity design). Keyed
+    on the RENDITION: each rendition has its own fine spine (vocals isolation can
+    yield different VAD chunk boundaries than raw).
     """
 ```
 
@@ -148,23 +176,23 @@ class SourceNode:
 @dataclass
 class AudioSegmentNode:
     """
-    Coarse ~5-min spine member. Owns the model-input WAV (E14: the audio of
-    record) as payload/provenance — the WAV is NOT its own node.
+    Coarse ~5-min spine member: a BOUNDARY range of the Source (an audio fact),
+    shared across every model-input rendition of it.
     
-    Provenance note (deliberate): the SourceRef anchors the owned model-input
-    WAV artifact (hash_file-verifiable). A hash over the sliced ORIGINAL source
-    bytes is not materializable without extracting per-range artifacts (decoded
-    ranges are not byte ranges); the structural chain to the Source rides the
-    PART_OF edge + the start/end properties.
+    Hashless by design: a boundary is not a materialized artifact — a hash over
+    the sliced ORIGINAL source bytes is not materializable without extracting
+    per-range artifacts (decoded ranges are not byte ranges). The materialized
+    model-input WAV lives on the `AudioRendition` child (which carries its
+    content hash); the structural chain to the Source rides the PART_OF edge +
+    the start/end properties. `segment_path` (the source-codec cut) stays here as
+    a rendition-independent archival pointer.
     """
     
     source: str  # Owning Source node id
     index: int  # Position in the coarse spine (0-based)
     start: float  # Boundary start (source-coordinate seconds)
     end: float  # Boundary end (source-coordinate seconds)
-    model_input_path: str  # The 16kHz mono WAV consumed by transcription/VAD/FA
-    model_input_hash: str  # Content hash over that WAV
-    segment_path: Optional[str]  # Source-codec cut file (archival pointer)
+    segment_path: Optional[str]  # Source-codec cut file (rendition-independent archival pointer)
     
     def id(self) -> str:  # Deterministic node id
             """Deterministic node id."""
@@ -174,30 +202,69 @@ class AudioSegmentNode:
         "Deterministic node id."
     
     def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
-            """Build the AudioSegment node wire dict."""
+            """Build the AudioSegment node wire dict (hashless boundary; sources empty)."""
             props: Dict[str, Any] = {
-        "Build the AudioSegment node wire dict."
+        "Build the AudioSegment node wire dict (hashless boundary; sources empty)."
+```
+
+``` python
+@dataclass
+class AudioRenditionNode:
+    """
+    A model-input rendition OF an AudioSegment — the materialized 16k-mono WAV
+    consumed by transcription/VAD/FA. OWNS the model-input (E14: the audio of
+    record); the AudioSegment above it is a hashless boundary.
+    
+    Identity = (audio segment, preprocessing chain). The raw convert-only path is
+    an empty chain (its id is stable + chain-free); vocals isolation / future
+    speech-enhancement are non-empty chains. Raw + vocals are therefore distinct
+    renditions that COEXIST under one AudioSegment — the divergent model-input
+    hash that used to collide the AudioSegment now lives on distinct rendition
+    nodes. Connects UP to its AudioSegment by DERIVED_FROM (it is derived from the
+    segment's audio); the production act is recorded separately by a CR-18
+    `Derivation` event.
+    """
+    
+    audio_segment: str  # Owning AudioSegment node id
+    model_input_path: str  # The 16kHz mono WAV consumed by transcription/VAD/FA
+    model_input_hash: str  # Content hash over that WAV (the rendition's identity-of-record artifact)
+    chain: List[str] = field(...)  # Ordered preprocessing-chain descriptors; [] = raw convert-only
+    
+    def id(self) -> str:  # Deterministic node id
+            """Deterministic node id."""
+            return audio_rendition_node_id(self.audio_segment, self.chain)
+    
+        def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
+        "Deterministic node id."
+    
+    def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
+            """Build the AudioRendition node wire dict (owns the model-input SourceRef)."""
+            props: Dict[str, Any] = {
+        "Build the AudioRendition node wire dict (owns the model-input SourceRef)."
+    
+    def derived_edge(self) -> Dict[str, Any]:  # Edge wire dict
+        "DERIVED_FROM edge: this rendition derives from its AudioSegment's audio."
 ```
 
 ``` python
 @dataclass
 class TranscriptNode:
     """
-    One transcriber's text for one AudioSegment (per-transcriber variants at
+    One transcriber's text for one AudioRendition (per-transcriber variants at
     the coarse layer — cross-transcriber divergence lives here, C4/C14).
     """
     
-    audio_segment: str  # Owning AudioSegment node id
+    rendition: str  # Owning AudioRendition node id
     transcriber: str  # Transcriber capability name
     config_hash: str  # Transcriber config hash
     text: str  # The transcript text (stored ONCE here; fine Segments slice into it)
-    audio_hash: str  # Content hash of the consumed model-input WAV
+    audio_hash: str  # Content hash of the consumed model-input WAV (the rendition's)
     metadata: Dict[str, Any] = field(...)  # Transcriber-reported metadata
     asserted_at: Optional[float]  # Derivation timestamp; None = now
     
     def id(self) -> str:  # Deterministic node id
             """Deterministic node id."""
-            return transcript_node_id(self.audio_segment, self.transcriber, self.config_hash)
+            return transcript_node_id(self.rendition, self.transcriber, self.config_hash)
     
         def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
         "Deterministic node id."
@@ -208,7 +275,7 @@ class TranscriptNode:
         "Build the Transcript node wire dict (capability attribution included)."
     
     def derived_edge(self) -> Dict[str, Any]:  # Edge wire dict
-        "DERIVED_FROM edge: this Transcript derives from its AudioSegment."
+        "DERIVED_FROM edge: this Transcript derives from its AudioRendition."
 ```
 
 ``` python
@@ -234,7 +301,8 @@ class TranscriptSliceRef:
 class SegmentNode:
     """
     Fine spine member: one VAD chunk — IMMUTABLE audio range + CORRECTABLE
-    text (the immutable-audio/mutable-text spine seam).
+    text (the immutable-audio/mutable-text spine seam). PART_OF its AudioRendition
+    (each rendition has its own fine spine).
     
     Layer-0 `text` is the ACCURACY transcriber's alignment; the designation is
     per-segment provenance, not global config (`text_from` names the
@@ -242,26 +310,26 @@ class SegmentNode:
     `text_slices`, the authoritative one included).
     """
     
-    audio_segment: str  # Owning AudioSegment node id
+    rendition: str  # Owning AudioRendition node id
     vad_config_hash: str  # VAD config hash (skeleton identity input)
-    chunk_start: float  # VAD chunk start (chunk-local seconds within the AudioSegment WAV)
+    chunk_start: float  # VAD chunk start (chunk-local seconds within the rendition WAV)
     chunk_end: float  # VAD chunk end (chunk-local seconds)
     index: int  # Source-wide fine-spine index (0-based)
     start_time: float  # Source-coordinate start (navigation)
     end_time: float  # Source-coordinate end
     text: str = ''  # Layer-0 text (accuracy alignment; "" = no aligned words, D14 class)
-    audio_hash: str = ''  # Content hash of the owning AudioSegment's model-input WAV
+    audio_hash: str = ''  # Content hash of the owning rendition's model-input WAV
     source: Optional[str]  # Source node id (convenience for direct filters)
     text_from: Optional[str]  # Authoritative Transcript node id (None when text is empty)
     text_slices: List[TranscriptSliceRef] = field(...)  # All per-transcriber slice refs
     
     def id(self) -> str:  # Deterministic node id
-            """Deterministic node id (audio-side identity; shared across transcribers)."""
-            return segment_node_id(self.audio_segment, self.vad_config_hash,
+            """Deterministic node id (audio-side identity; shared across transcribers, per-rendition)."""
+            return segment_node_id(self.rendition, self.vad_config_hash,
                                    self.chunk_start, self.chunk_end)
     
         def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
-        "Deterministic node id (audio-side identity; shared across transcribers)."
+        "Deterministic node id (audio-side identity; shared across transcribers, per-rendition)."
     
     def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
             """Build the Segment node wire dict (audio ref + per-transcriber text slice refs)."""
