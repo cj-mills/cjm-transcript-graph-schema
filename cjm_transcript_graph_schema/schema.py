@@ -1,10 +1,11 @@
-"""The audio-transcript layer schema (where-graph-begins locked layer schema): Source -> AudioSegment(coarse boundary) -> AudioRendition(model-input: raw | vocals | ...) -> Transcript(per-transcriber variants) emitted by transcription, extended with the fine Segment spine (per-rendition) by decomposition. Deterministic identity tuples per the stage-5 ratified rule; the AudioRendition node lets raw + preprocessed model-inputs of one boundary coexist in one graph. Document from the pre-CR-18 era dissolves into Source."""
+"""The audio-transcript layer schema (where-graph-begins locked layer schema): Source -> AudioSegment(coarse boundary) -> AudioRendition(model-input: raw | vocals | ...) -> Transcript(per-transcriber variants) emitted by transcription, extended with the fine Segment spine (per-rendition) by decomposition, and with the intrinsic Collection layer ABOVE Source (book/series/course; proposed-by-tool / confirmed-by-actor, order optional) captured at transcription hand-off. Deterministic identity tuples per the stage-5 ratified rule; the AudioRendition node lets raw + preprocessed model-inputs of one boundary coexist in one graph. Document from the pre-CR-18 era dissolves into Source."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cjm_context_graph_layer.grammar import attribution, make_edge, OverlayRelations
+from cjm_context_graph_layer.grammar import (attribution, make_edge, OverlayRelations, spine_edges,
+                                             SpineRelations)
 from cjm_context_graph_layer.identity import derive_node_id
 from cjm_context_graph_primitives.locators import FileRef, GraphNodeRef
 from cjm_context_graph_primitives.provenance import SourceRef
@@ -18,11 +19,12 @@ class TranscriptGraphLabels:
     AUDIO_RENDITION = "AudioRendition" # A model-input rendition OF an AudioSegment (raw convert | vocals | future enhancement); OWNS the model-input WAV
     TRANSCRIPT = "Transcript"          # Per-transcriber text variant of one AudioRendition
     SEGMENT = "Segment"                # Fine spine member: one VAD chunk (immutable audio + correctable text), per-rendition
+    COLLECTION = "Collection"          # Intrinsic collection (book / series / course): the fractal spine layer ABOVE Source
 
     @classmethod
     def all(cls) -> list:  # All schema labels
         """All schema labels."""
-        return [cls.SOURCE, cls.AUDIO_SEGMENT, cls.AUDIO_RENDITION, cls.TRANSCRIPT, cls.SEGMENT]
+        return [cls.SOURCE, cls.AUDIO_SEGMENT, cls.AUDIO_RENDITION, cls.TRANSCRIPT, cls.SEGMENT, cls.COLLECTION]
 
 
 def source_node_id(
@@ -321,3 +323,88 @@ class SegmentNode:
             "properties": props,
             "sources": sources,
         }
+
+
+def normalize_collection_title(
+    title: str,  # Raw title (folder name, user input, ...)
+) -> str:  # Normalized identity form
+    """Normalize a collection title for identity derivation.
+
+    Casefold + underscores-to-spaces + whitespace collapse, so a folder named
+    ``Hardcore_History`` and a hand-typed ``Hardcore History`` converge on the
+    SAME collection node (ae3464fc: select-existing and retype-the-title are
+    the same act by construction). Display keeps the raw title; only identity
+    normalizes."""
+    return " ".join(title.replace("_", " ").split()).casefold()
+
+
+def collection_node_id(
+    title: str,  # Collection title (normalized internally)
+) -> str:  # Deterministic Collection node id
+    """Collection identity = the NORMALIZED TITLE (ratified fork, hub-session
+    2026-07-21): path-based identity breaks workspace relocatability, and
+    member-hash identity breaks late-added members — late binding is a feature.
+    The same book ingested twice (different paths, different machines, members
+    accreted over weeks) is the same collection; rare title collisions are
+    propose/confirm reconciler territory."""
+    return derive_node_id("collection", normalize_collection_title(title))
+
+
+@dataclass
+class CollectionNode:
+    """An intrinsic collection (book, podcast series, lecture course) — the
+    fractal spine layer ABOVE Source (the grammar's "series -> episode
+    tomorrow", arrived).
+
+    Status rides the node (ae3464fc actor criterion): a human who accepted,
+    renamed, or selected the collection at run launch has CONFIRMED it;
+    untouched tool defaults (headless folder run) land PROPOSED — visible and
+    grouping-usable everywhere, flagged as awaiting a human. A folder is
+    EVIDENCE of a grouping, not proof: proposed collections are cheap to
+    rename, refile out of, or dissolve. root_kind=asserted — a collection is
+    a grouping ASSERTION about ingested content, not ingested content itself.
+    Collection PART_OF Collection nesting is grammar-free (no v0 tooling)."""
+    title: str                     # Display title (identity input via normalize_collection_title)
+    status: str = "proposed"       # "proposed" (tool inference) | "confirmed" (human act)
+    actor: str = "human"           # Who declared it (attribution; e.g. "human", "tui:transcription", "cli:transcribe")
+    asserted_at: Optional[float] = None  # Declaration timestamp; None = now
+
+    @property
+    def id(self) -> str:  # Deterministic node id
+        """Deterministic node id."""
+        return collection_node_id(self.title)
+
+    def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
+        """Build the Collection node wire dict (asserted root; attribution included)."""
+        props: Dict[str, Any] = {
+            "title": self.title,
+            "status": self.status,
+            "root_kind": "asserted",
+        }
+        props.update(attribution(self.actor, method="collection-declaration",
+                                 asserted_at=self.asserted_at))
+        return {
+            "id": self.id,
+            "label": TranscriptGraphLabels.COLLECTION,
+            "properties": props,
+            "sources": [],
+        }
+
+
+def collection_edges(
+    collection_id: str,     # Collection node id
+    member_ids: List[str],  # Member Source node ids (declaration order when ordered=True)
+    ordered: bool = False,  # True = materialize the order (NEXT chain + STARTS_WITH)
+) -> List[Dict[str, Any]]:  # Edge wire dicts
+    """Membership edges for a collection (ae3464fc: ORDER IS OPTIONAL).
+
+    Unordered membership is just PART_OF member->collection — individually
+    accreted members (chapters run one at a time) attach without fabricating a
+    sequence. When an order IS known (a folder run's sorted expansion, or a
+    curation act), the full fractal spine pattern materializes via
+    spine_edges: PART_OF + NEXT chain + STARTS_WITH — identical grammar to
+    every layer below. Reordering and late insertion are curation ops, never
+    capture-time guesses."""
+    if ordered:
+        return spine_edges(collection_id, member_ids)
+    return [make_edge(m, collection_id, SpineRelations.PART_OF) for m in member_ids]

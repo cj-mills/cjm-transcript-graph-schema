@@ -3,10 +3,12 @@
 Projected from the schema notebook's four test cells at the c25780e8 flip."""
 from cjm_context_graph_primitives.provenance import SourceRef
 from cjm_transcript_graph_schema.schema import (AudioRenditionNode, AudioSegmentNode,
-                                                SegmentNode, SourceNode,
+                                                CollectionNode, SegmentNode, SourceNode,
                                                 TranscriptNode, TranscriptSliceRef,
                                                 audio_rendition_node_id,
                                                 audio_segment_node_id,
+                                                collection_edges, collection_node_id,
+                                                normalize_collection_title,
                                                 segment_node_id, source_node_id,
                                                 transcript_node_id)
 
@@ -129,3 +131,46 @@ def test_segment_shape_slices_identity_and_empty():
     en = empty.to_graph_node()
     assert en["properties"]["text"] == "" and "text_from" not in en["properties"]
     assert len(en["sources"]) == 1
+
+
+def test_collection_identity_wire_shape_and_edges():
+    # identity: normalized-title — folder-name and hand-typed forms converge
+    assert normalize_collection_title("Hardcore_History") == "hardcore history"
+    cid = collection_node_id("Hardcore_History")
+    assert cid == collection_node_id("hardcore  history")
+    assert cid != collection_node_id("Supernova in the East")
+    assert cid != SID, "kinds never collide"
+
+    # wire shape: proposed tool default vs confirmed human act (ae3464fc actor criterion)
+    proposed = CollectionNode(title="Hardcore_History", actor="cli:transcribe",
+                              asserted_at=123.0)
+    pn = proposed.to_graph_node()
+    assert pn["id"] == cid and pn["label"] == "Collection"
+    assert pn["properties"]["status"] == "proposed"
+    assert pn["properties"]["root_kind"] == "asserted"
+    assert pn["properties"]["actor"] == "cli:transcribe"
+    assert pn["properties"]["method"] == "collection-declaration"
+    assert pn["properties"]["asserted_at"] == 123.0
+    assert pn["properties"]["title"] == "Hardcore_History", "display keeps the raw title"
+    assert pn["sources"] == [], "a collection asserts grouping; it ingests nothing"
+    confirmed = CollectionNode(title="Hardcore History", status="confirmed").to_graph_node()
+    assert confirmed["id"] == cid, "confirming/renaming to an equivalent title is the same node"
+    assert confirmed["properties"]["status"] == "confirmed"
+
+    # membership edges: unordered = PART_OF only; ordered = full fractal spine
+    m1 = source_node_id("sha256:ch1")
+    m2 = source_node_id("sha256:ch2")
+    m3 = source_node_id("sha256:ch3")
+    loose = collection_edges(cid, [m1, m3])
+    assert [e["relation_type"] for e in loose] == ["PART_OF", "PART_OF"]
+    assert all(e["target_id"] == cid for e in loose)
+    ordered = collection_edges(cid, [m1, m2, m3], ordered=True)
+    rels = sorted(e["relation_type"] for e in ordered)
+    assert rels == ["NEXT", "NEXT", "PART_OF", "PART_OF", "PART_OF", "STARTS_WITH"]
+    starts = [e for e in ordered if e["relation_type"] == "STARTS_WITH"][0]
+    assert starts["source_id"] == cid and starts["target_id"] == m1
+    nexts = {(e["source_id"], e["target_id"]) for e in ordered if e["relation_type"] == "NEXT"}
+    assert nexts == {(m1, m2), (m2, m3)}
+    # late-added member attaches to the SAME node without touching the chain
+    late = collection_edges(cid, [source_node_id("sha256:ch2.5")])
+    assert late[0]["relation_type"] == "PART_OF" and late[0]["target_id"] == cid
