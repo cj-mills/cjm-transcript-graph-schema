@@ -174,3 +174,33 @@ def test_collection_identity_wire_shape_and_edges():
     # late-added member attaches to the SAME node without touching the chain
     late = collection_edges(cid, [source_node_id("sha256:ch2.5")])
     assert late[0]["relation_type"] == "PART_OF" and late[0]["target_id"] == cid
+
+
+def test_segment_skeleton_hash_prop_and_split_policy():
+    # Every new commit records its skeleton identity input as a QUERYABLE prop
+    # (spine-scoped reads filter on it; legacy nodes lack it entirely).
+    seg = SegmentNode(rendition=R_RAW, vad_config_hash="sha256:skel", chunk_start=1.0,
+                      chunk_end=2.0, index=0, start_time=1.0, end_time=2.0, text="hi")
+    props = seg.to_graph_node()["properties"]
+    assert props["skeleton_hash"] == "sha256:skel"
+    assert "split_policy" not in props, "no split stage -> no split_policy prop"
+
+    split = SegmentNode(rendition=R_RAW, vad_config_hash="sha256:skel2", chunk_start=1.0,
+                        chunk_end=1.6, index=0, start_time=1.0, end_time=1.6, text="hi",
+                        split_policy="sentence-split/v1")
+    sprops = split.to_graph_node()["properties"]
+    assert sprops["skeleton_hash"] == "sha256:skel2"
+    assert sprops["split_policy"] == "sentence-split/v1"
+
+    # split_policy is METADATA, never an identity input — the id stays a pure
+    # function of (rendition, skeleton hash, chunk range).
+    a = SegmentNode(rendition=R_RAW, vad_config_hash="h", chunk_start=1.0, chunk_end=2.0,
+                    index=0, start_time=1.0, end_time=2.0)
+    b = SegmentNode(rendition=R_RAW, vad_config_hash="h", chunk_start=1.0, chunk_end=2.0,
+                    index=0, start_time=1.0, end_time=2.0, split_policy="sentence-split/v1")
+    assert a.id == b.id
+    # ...while the skeleton hash itself DOES fork identity (parallel spines
+    # coexist because no node id is shared across skeletons).
+    c = SegmentNode(rendition=R_RAW, vad_config_hash="h2", chunk_start=1.0, chunk_end=2.0,
+                    index=0, start_time=1.0, end_time=2.0)
+    assert c.id != a.id

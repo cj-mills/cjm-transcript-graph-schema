@@ -80,7 +80,7 @@ def transcript_node_id(
 
 def segment_node_id(
     rendition_id: str,     # Owning AudioRendition node id
-    vad_config_hash: str,  # VAD capability config hash (skeleton identity input)
+    vad_config_hash: str,  # Skeleton config hash (identity input: VAD config, + split policy when a split stage ran)
     chunk_start: float,    # VAD chunk start (chunk-local seconds within the rendition WAV)
     chunk_end: float,      # VAD chunk end (chunk-local seconds)
 ) -> str:  # Deterministic Segment node id
@@ -273,14 +273,17 @@ class TranscriptSliceRef:
 class SegmentNode:
     """Fine spine member: one VAD chunk — IMMUTABLE audio range + CORRECTABLE
     text (the immutable-audio/mutable-text spine seam). PART_OF its AudioRendition
-    (each rendition has its own fine spine).
+    (each rendition has its own fine spine). Parallel SPINES coexist under one
+    rendition (sentence-split, DEC f1024568): the skeleton hash feeds every node
+    id AND rides the queryable `skeleton_hash` prop, so spine-scoped reads never
+    mix coexisting skeletons (pre-split nodes lack the prop = the legacy spine).
 
     Layer-0 `text` is the ACCURACY transcriber's alignment; the designation is
     per-segment provenance, not global config (`text_from` names the
     authoritative Transcript; every transcriber's char range rides
     `text_slices`, the authoritative one included)."""
     rendition: str            # Owning AudioRendition node id
-    vad_config_hash: str      # VAD config hash (skeleton identity input)
+    vad_config_hash: str      # Skeleton config hash (identity input: VAD config, + split policy when a split stage ran)
     chunk_start: float        # VAD chunk start (chunk-local seconds within the rendition WAV)
     chunk_end: float          # VAD chunk end (chunk-local seconds)
     index: int                # Source-wide fine-spine index (0-based)
@@ -290,6 +293,7 @@ class SegmentNode:
     audio_hash: str = ""      # Content hash of the owning rendition's model-input WAV
     source: Optional[str] = None     # Source node id (convenience for direct filters)
     text_from: Optional[str] = None  # Authoritative Transcript node id (None when text is empty)
+    split_policy: Optional[str] = None  # Split policy+version that refined the skeleton (None = raw VAD chunks)
     text_slices: List[TranscriptSliceRef] = field(default_factory=list)  # All per-transcriber slice refs
 
     @property
@@ -308,7 +312,10 @@ class SegmentNode:
             "chunk_start": self.chunk_start,
             "chunk_end": self.chunk_end,
             "rendition_id": self.rendition,
+            "skeleton_hash": self.vad_config_hash,
         }
+        if self.split_policy:
+            props["split_policy"] = self.split_policy
         if self.source:
             props["source_id"] = self.source
         if self.text_from:
