@@ -20,11 +20,13 @@ class TranscriptGraphLabels:
     TRANSCRIPT = "Transcript"          # Per-transcriber text variant of one AudioRendition
     SEGMENT = "Segment"                # Fine spine member: one VAD chunk (immutable audio + correctable text), per-rendition
     COLLECTION = "Collection"          # Intrinsic collection (book / series / course): the fractal spine layer ABOVE Source
+    REFERENCE = "Reference"            # Human-added resource link attached to a Source (publisher page / author post / related notes / cited work): Source -HAS_REFERENCE-> Reference (ruling a7ca900d (3), item ae103970)
 
     @classmethod
     def all(cls) -> list:  # All schema labels
         """All schema labels."""
-        return [cls.SOURCE, cls.AUDIO_SEGMENT, cls.AUDIO_RENDITION, cls.TRANSCRIPT, cls.SEGMENT, cls.COLLECTION]
+        return [cls.SOURCE, cls.AUDIO_SEGMENT, cls.AUDIO_RENDITION, cls.TRANSCRIPT, cls.SEGMENT, cls.COLLECTION,
+                cls.REFERENCE]
 
 
 def source_node_id(
