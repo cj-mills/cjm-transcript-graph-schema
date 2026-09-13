@@ -80,6 +80,39 @@ def transcript_node_id(
     return derive_node_id("transcript", rendition_id, transcriber, config_hash)
 
 
+EXTERNAL_TRANSCRIBER_MARKER = "/manual"  # Suffix naming an operator-landed (pasted) transcript producer
+
+
+def external_transcriber_name(
+    model_id: str,  # The external model that produced the text (e.g. "gemini-2.5-pro")
+) -> str:  # The transcriber name an external landing files under
+    """Transcriber name for an EXTERNAL landing (ruling 9ffce5f7 (1)): the model id
+    plus a manual marker, so a pasted transcript is a THIRD TRANSCRIBER beside the
+    local capabilities — decomp folds it per chunk like any other variant, and the
+    marker keeps it distinguishable from a capability run of the same model."""
+    mid = (model_id or "").strip()
+    if not mid:
+        raise ValueError("external_transcriber_name: model_id is required")
+    return mid + EXTERNAL_TRANSCRIBER_MARKER
+
+
+def external_config_hash(
+    model_id: str,     # The external model id
+    prompt_hash: str,  # Hash of the prompt template the operator used ("" = no prompt recorded)
+) -> str:  # "sha256:<hex>" — the config-hash slot of an external landing
+    """The config hash an external landing carries where a capability's effective
+    config hash goes: sha256 over (model id, prompt hash). The prompt is DATA
+    (f304d31d), so a different prompt template is a different variant — and the
+    Transcript identity (rendition, transcriber, config_hash) stays recomputable
+    from the derived manifest alone."""
+    import hashlib
+    h = hashlib.sha256()
+    h.update((model_id or "").strip().encode("utf-8"))
+    h.update(b"\n")
+    h.update((prompt_hash or "").strip().encode("utf-8"))
+    return "sha256:" + h.hexdigest()
+
+
 def segment_node_id(
     rendition_id: str,     # Owning AudioRendition node id
     vad_config_hash: str,  # Skeleton config hash (identity input: VAD config, + split policy when a split stage ran)
@@ -222,6 +255,8 @@ class TranscriptNode:
     audio_hash: str               # Content hash of the consumed model-input WAV (the rendition's)
     metadata: Dict[str, Any] = field(default_factory=dict)  # Transcriber-reported metadata
     asserted_at: Optional[float] = None  # Derivation timestamp; None = now
+    actor: Optional[str] = None   # Attribution actor; None = "capability:<transcriber>" (an EXTERNAL landing names the operator, 9ffce5f7 (1))
+    method: str = "transcribe"    # Attribution method ("transcribe" for a capability run; "external-landing" for pasted text)
 
     @property
     def id(self) -> str:  # Deterministic node id
@@ -238,7 +273,7 @@ class TranscriptNode:
         }
         if self.metadata:
             props["metadata"] = dict(self.metadata)
-        props.update(attribution(f"capability:{self.transcriber}", method="transcribe",
+        props.update(attribution(self.actor or f"capability:{self.transcriber}", method=self.method,
                                  asserted_at=self.asserted_at))
         return {
             "id": self.id,
@@ -252,6 +287,18 @@ class TranscriptNode:
     def derived_edge(self) -> Dict[str, Any]:  # Edge wire dict
         """DERIVED_FROM edge: this Transcript derives from its AudioRendition."""
         return make_edge(self.id, self.rendition, OverlayRelations.DERIVED_FROM)
+
+    def supersedes_edge(
+        self,
+        prior_transcript_id: str,  # The Transcript variant this one replaces (same rendition + transcriber, an older config)
+    ) -> Dict[str, Any]:  # Edge wire dict
+        """SUPERSEDES edge: this variant replaces a prior one for the same (rendition,
+        transcriber) — a chunk-targeted re-run under a new config, or a re-landed
+        external transcript (ruling 910f3692 (2)). The prior node STAYS as append-only
+        history; readers treat a variant with an incoming SUPERSEDES edge as NOT LIVE."""
+        if prior_transcript_id == self.id:
+            raise ValueError("supersedes_edge: a Transcript cannot supersede itself")
+        return make_edge(self.id, prior_transcript_id, OverlayRelations.SUPERSEDES)
 
 
 @dataclass

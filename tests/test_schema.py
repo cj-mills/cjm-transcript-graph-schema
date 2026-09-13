@@ -204,3 +204,42 @@ def test_segment_skeleton_hash_prop_and_split_policy():
     c = SegmentNode(rendition=R_RAW, vad_config_hash="h2", chunk_start=1.0, chunk_end=2.0,
                     index=0, start_time=1.0, end_time=2.0)
     assert c.id != a.id
+
+
+def test_transcript_supersedes_edge_external_identity_and_operator_attribution():
+    """cf0b91d6 / ruling 910f3692: a re-run's new variant SUPERSEDES the prior variant for
+    the same (rendition, transcriber) with a deterministic edge id and refuses a self-edge;
+    an EXTERNAL landing files under `<model id>/manual` with a config hash derived from
+    (model id, prompt hash) — a different prompt is a different variant — and carries the
+    OPERATOR as actor (default attribution stays capability:<transcriber>/transcribe)."""
+    import pytest
+    from cjm_transcript_graph_schema.schema import (EXTERNAL_TRANSCRIBER_MARKER, external_config_hash,
+                                                    external_transcriber_name)
+
+    old = TranscriptNode(rendition=R_RAW, transcriber="voxtral", config_hash="cfg-old",
+                         text="some some some", audio_hash="sha256:wav0")
+    new = TranscriptNode(rendition=R_RAW, transcriber="voxtral", config_hash="cfg-new",
+                         text="the good prefix", audio_hash="sha256:wav0")
+    assert old.id != new.id
+    e = new.supersedes_edge(old.id)
+    assert (e["source_id"], e["target_id"], e["relation_type"]) == (new.id, old.id, "SUPERSEDES")
+    assert e["id"] == new.supersedes_edge(old.id)["id"], "deterministic edge id"
+    with pytest.raises(ValueError):
+        new.supersedes_edge(new.id)
+    # External landing identity.
+    name = external_transcriber_name("gemini-2.5-pro")
+    assert name == "gemini-2.5-pro" + EXTERNAL_TRANSCRIBER_MARKER == "gemini-2.5-pro/manual"
+    with pytest.raises(ValueError):
+        external_transcriber_name("  ")
+    h1 = external_config_hash("gemini-2.5-pro", "sha256:prompt-a")
+    h2 = external_config_hash("gemini-2.5-pro", "sha256:prompt-b")
+    assert h1.startswith("sha256:") and h1 != h2
+    assert h1 == external_config_hash("gemini-2.5-pro", "sha256:prompt-a"), "deterministic"
+    ext = TranscriptNode(rendition=R_RAW, transcriber=name, config_hash=h1, text="NCCL, not nickel",
+                         audio_hash="sha256:wav0", actor="human:operator", method="external-landing")
+    en = ext.to_graph_node()
+    assert en["id"] == transcript_node_id(R_RAW, name, h1)
+    assert en["properties"]["actor"] == "human:operator" and en["properties"]["method"] == "external-landing"
+    # The default attribution is unchanged for capability runs.
+    assert new.to_graph_node()["properties"]["actor"] == "capability:voxtral"
+    assert new.to_graph_node()["properties"]["method"] == "transcribe"
