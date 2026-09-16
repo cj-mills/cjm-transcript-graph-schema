@@ -118,12 +118,23 @@ def segment_node_id(
     vad_config_hash: str,  # Skeleton config hash (identity input: VAD config, + split policy when a split stage ran)
     chunk_start: float,    # VAD chunk start (chunk-local seconds within the rendition WAV)
     chunk_end: float,      # VAD chunk end (chunk-local seconds)
+    identity_salt: Optional[str] = None,  # Respine salt (0b4d5cfa (3)): joins the id ONLY; None = the spine's original derivation
 ) -> str:  # Deterministic Segment node id
     """Fine Segment identity = audio-side only (audio rendition, VAD config, chunk
     range) — so the skeleton's ids are SHARED across transcribers by
     construction (C4 "store agreement once" falls out of identity design). Keyed
     on the RENDITION: each rendition has its own fine spine (vocals isolation can
-    yield different VAD chunk boundaries than raw)."""
+    yield different VAD chunk boundaries than raw).
+
+    A CHUNK RESPINE (0b4d5cfa) re-derives one coarse chunk into the LIVE spine
+    from a landed external transcript: its segments keep the live skeleton hash
+    (every picker groups spines by it) and fork identity through `identity_salt`
+    = the landed Transcript's node id, so the same landing twice collides into
+    a no-op and a different landing mints fresh segments. None (the default)
+    reproduces every pre-salt id unchanged."""
+    if identity_salt:
+        return derive_node_id("segment", rendition_id, vad_config_hash, chunk_start, chunk_end,
+                              identity_salt)
     return derive_node_id("segment", rendition_id, vad_config_hash, chunk_start, chunk_end)
 
 
@@ -330,7 +341,13 @@ class SegmentNode:
     Layer-0 `text` is the ACCURACY transcriber's alignment; the designation is
     per-segment provenance, not global config (`text_from` names the
     authoritative Transcript; every transcriber's char range rides
-    `text_slices`, the authoritative one included)."""
+    `text_slices`, the authoritative one included).
+
+    A CHUNK RESPINE (0b4d5cfa) replaces one coarse chunk's segments INSIDE the
+    live spine: the new segments carry `identity_salt` (joins the id only —
+    `skeleton_hash` stays the live spine's, so no reader splits the spine),
+    the old ones are stamped `superseded_by` (the respine op id) and leave the
+    live view — readers filter `superseded_by is null`; nothing is deleted."""
     rendition: str            # Owning AudioRendition node id
     vad_config_hash: str      # Skeleton config hash (identity input: VAD config, + split policy when a split stage ran)
     chunk_start: float        # VAD chunk start (chunk-local seconds within the rendition WAV)
@@ -344,12 +361,16 @@ class SegmentNode:
     text_from: Optional[str] = None  # Authoritative Transcript node id (None when text is empty)
     split_policy: Optional[str] = None  # Split policy+version that refined the skeleton (None = raw VAD chunks)
     text_slices: List[TranscriptSliceRef] = field(default_factory=list)  # All per-transcriber slice refs
+    identity_salt: Optional[str] = None  # Respine salt (the landed Transcript id): joins the id ONLY (0b4d5cfa (3)); None = original derivation
+    superseded_by: Optional[str] = None  # Respine op id that retired this segment from the live view (stamped post-hoc; None = live)
 
     @property
     def id(self) -> str:  # Deterministic node id
-        """Deterministic node id (audio-side identity; shared across transcribers, per-rendition)."""
+        """Deterministic node id (audio-side identity; shared across transcribers, per-rendition;
+        forked by `identity_salt` on a chunk respine)."""
         return segment_node_id(self.rendition, self.vad_config_hash,
-                               self.chunk_start, self.chunk_end)
+                               self.chunk_start, self.chunk_end,
+                               identity_salt=self.identity_salt)
 
     def to_graph_node(self) -> Dict[str, Any]:  # Node wire dict
         """Build the Segment node wire dict (audio ref + per-transcriber text slice refs)."""
@@ -369,6 +390,10 @@ class SegmentNode:
             props["source_id"] = self.source
         if self.text_from:
             props["text_from"] = self.text_from
+        if self.identity_salt:
+            props["identity_salt"] = self.identity_salt
+        if self.superseded_by:
+            props["superseded_by"] = self.superseded_by
         sources = [SourceRef(locator=GraphNodeRef(node_id=self.rendition),
                              content_hash=self.audio_hash,
                              slice=TimeSlice(start=self.chunk_start, end=self.chunk_end)).to_dict()]
@@ -379,6 +404,53 @@ class SegmentNode:
             "properties": props,
             "sources": sources,
         }
+
+
+RESPINE_OP_VERB = "chunk-respine"                # The journaled spine-fact op that lands a chunk respine (0b4d5cfa (4))
+SOURCE_RESPINED_CHUNKS_PROP = "respined_chunks"  # Source prop: the list of RespinedChunkEntry dicts, append-only
+SEGMENT_SUPERSEDED_BY_PROP = "superseded_by"     # Segment prop stamped on the chunk's old segments (live readers filter it null)
+
+
+@dataclass
+class RespinedChunkEntry:
+    """One chunk respine as the Source records it (0b4d5cfa (4)): the entry the
+    `chunk-respine` op appends to the Source's `respined_chunks` list — WHICH
+    coarse chunk, WHICH landed Transcript re-derived it (= the new segments'
+    identity salt), under WHICH decomp run, when, and what the op did to the
+    dependents (stranded ids on explicit say-so; carried = the corrections the
+    chunk-scoped transfer re-homed by time: accepted event inserts, speaker
+    assignments). The op id is what `superseded_by` on the old segments names."""
+    audio_segment: str                                  # AudioSegment node id (the coarse chunk)
+    transcript: str                                     # The landed Transcript node id (= identity_salt of the new segments)
+    run: str                                            # The decomp run id the re-derivation ran under
+    op_id: str                                          # The chunk-respine op id (stamped as superseded_by)
+    ts: float                                           # Wall-clock seconds of the landing
+    old_segments: List[str] = field(default_factory=list)   # The superseded segment ids, index order
+    new_segments: List[str] = field(default_factory=list)   # The replacement segment ids, index order
+    stranded: List[str] = field(default_factory=list)   # Dependent Correction ids that stopped projecting (on say-so)
+    carried: List[str] = field(default_factory=list)    # Fresh Correction ids the transfer minted onto the new segments
+    straddles: List[str] = field(default_factory=list)  # New segment ids left unassigned because they straddle two donor speakers (4a7ec4f8 (3))
+
+    def to_dict(self) -> Dict[str, Any]:  # The wire entry
+        """The entry as it rides the Source prop (plain JSON, list order preserved)."""
+        return {"audio_segment": self.audio_segment, "transcript": self.transcript,
+                "run": self.run, "op_id": self.op_id, "ts": self.ts,
+                "old_segments": list(self.old_segments), "new_segments": list(self.new_segments),
+                "stranded": list(self.stranded), "carried": list(self.carried),
+                "straddles": list(self.straddles)}
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "RespinedChunkEntry":  # Parsed entry
+        """Read an entry back off the Source prop (missing lists read empty)."""
+        return cls(audio_segment=str(d.get("audio_segment") or ""),
+                   transcript=str(d.get("transcript") or ""),
+                   run=str(d.get("run") or ""), op_id=str(d.get("op_id") or ""),
+                   ts=float(d.get("ts") or 0.0),
+                   old_segments=[str(s) for s in (d.get("old_segments") or [])],
+                   new_segments=[str(s) for s in (d.get("new_segments") or [])],
+                   stranded=[str(s) for s in (d.get("stranded") or [])],
+                   carried=[str(s) for s in (d.get("carried") or [])],
+                   straddles=[str(s) for s in (d.get("straddles") or [])])
 
 
 def normalize_collection_title(

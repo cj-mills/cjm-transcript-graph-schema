@@ -243,3 +243,49 @@ def test_transcript_supersedes_edge_external_identity_and_operator_attribution()
     # The default attribution is unchanged for capability runs.
     assert new.to_graph_node()["properties"]["actor"] == "capability:voxtral"
     assert new.to_graph_node()["properties"]["method"] == "transcribe"
+
+
+def test_segment_identity_salt_and_superseded_by_respine_props():
+    """0b4d5cfa (3)/(4), schema 0.0.11: a chunk respine forks Segment identity through
+    `identity_salt` ONLY — the skeleton_hash prop stays the live spine's, so no reader
+    splits the spine; the salt is the landed Transcript id, so the same landing twice
+    collides into the same id (idempotent) and a different landing mints fresh ids.
+    `superseded_by` rides as a prop only when set (live segments carry none)."""
+    from cjm_transcript_graph_schema.schema import (RESPINE_OP_VERB, SEGMENT_SUPERSEDED_BY_PROP,
+                                                    SOURCE_RESPINED_CHUNKS_PROP, RespinedChunkEntry)
+
+    live = SegmentNode(rendition=R_RAW, vad_config_hash="sha256:skel", chunk_start=1.0,
+                       chunk_end=2.0, index=7, start_time=301.0, end_time=302.0, text="hi")
+    t_a = transcript_node_id(R_RAW, "gemini-3.8-flash/manual", "sha256:cfg-a")
+    t_b = transcript_node_id(R_RAW, "gemini-3.8-flash/manual", "sha256:cfg-b")
+    salted = SegmentNode(rendition=R_RAW, vad_config_hash="sha256:skel", chunk_start=1.0,
+                         chunk_end=2.0, index=7, start_time=301.0, end_time=302.0, text="hi",
+                         identity_salt=t_a)
+    again = SegmentNode(rendition=R_RAW, vad_config_hash="sha256:skel", chunk_start=1.0,
+                        chunk_end=2.0, index=7, start_time=301.0, end_time=302.0, text="hi",
+                        identity_salt=t_a)
+    other = SegmentNode(rendition=R_RAW, vad_config_hash="sha256:skel", chunk_start=1.0,
+                        chunk_end=2.0, index=7, start_time=301.0, end_time=302.0, text="hi",
+                        identity_salt=t_b)
+    assert live.id == segment_node_id(R_RAW, "sha256:skel", 1.0, 2.0), "pre-salt ids unchanged"
+    assert live.id == segment_node_id(R_RAW, "sha256:skel", 1.0, 2.0, identity_salt=None)
+    assert salted.id != live.id and salted.id == again.id and other.id != salted.id
+    assert salted.id == segment_node_id(R_RAW, "sha256:skel", 1.0, 2.0, identity_salt=t_a)
+    lp, sp = live.to_graph_node()["properties"], salted.to_graph_node()["properties"]
+    assert sp["skeleton_hash"] == lp["skeleton_hash"] == "sha256:skel", "the salt never touches the hash"
+    assert sp["identity_salt"] == t_a and "identity_salt" not in lp
+    assert SEGMENT_SUPERSEDED_BY_PROP not in lp and SEGMENT_SUPERSEDED_BY_PROP not in sp
+    old = SegmentNode(rendition=R_RAW, vad_config_hash="sha256:skel", chunk_start=1.0,
+                      chunk_end=2.0, index=7, start_time=301.0, end_time=302.0, text="hi",
+                      superseded_by="op-1")
+    assert old.id == live.id, "superseded_by is a stamp, never identity"
+    assert old.to_graph_node()["properties"][SEGMENT_SUPERSEDED_BY_PROP] == "op-1"
+    # The Source-side record round-trips (missing lists read empty).
+    assert (RESPINE_OP_VERB, SOURCE_RESPINED_CHUNKS_PROP) == ("chunk-respine", "respined_chunks")
+    entry = RespinedChunkEntry(audio_segment=A1, transcript=t_a, run="run-1", op_id="op-1",
+                               ts=1.5, old_segments=[live.id], new_segments=[salted.id],
+                               stranded=["c1"], carried=["c2"], straddles=[salted.id])
+    d = entry.to_dict()
+    assert RespinedChunkEntry.from_dict(d) == entry
+    assert RespinedChunkEntry.from_dict({"audio_segment": A1, "transcript": t_a,
+                                         "run": "r", "op_id": "o", "ts": 2}).stranded == []

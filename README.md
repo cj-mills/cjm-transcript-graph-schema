@@ -15,6 +15,7 @@ Audio-transcript layer schema for context graphs: Source, AudioSegment, Transcri
 - `AudioRenditionNode` _class_ — A model-input rendition OF an AudioSegment — the materialized 16k-mono WAV
 - `AudioSegmentNode` _class_ — Coarse ~5-min spine member: a BOUNDARY range of the Source (an audio fact),
 - `CollectionNode` _class_ — An intrinsic collection (book, podcast series, lecture course) — the
+- `RespinedChunkEntry` _class_ — One chunk respine as the Source records it (0b4d5cfa (4)): the entry the
 - `SegmentNode` _class_ — Fine spine member: one VAD chunk — IMMUTABLE audio range + CORRECTABLE
 - `SourceNode` _class_ — The provenance root: one ingested media file.
 - `TranscriptGraphLabels` _class_ — Node labels of the audio-transcript layer schema.
