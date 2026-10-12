@@ -14,6 +14,7 @@ from cjm_context_graph_primitives.slices import CharSlice, FullContent, TimeSlic
 
 class TranscriptGraphLabels:
     """Node labels of the audio-transcript layer schema."""
+
     SOURCE = "Source"                  # Provenance root: one ingested media file
     AUDIO_SEGMENT = "AudioSegment"     # Coarse ~5-min spine member: a boundary range of the Source (an audio FACT; rendition-independent)
     AUDIO_RENDITION = "AudioRendition" # A model-input rendition OF an AudioSegment (raw convert | vocals | future enhancement); OWNS the model-input WAV
@@ -141,6 +142,7 @@ def segment_node_id(
 @dataclass
 class SourceNode:
     """The provenance root: one ingested media file."""
+
     content_hash: str            # Content hash over the file ("algo:hexdigest"; the identity input)
     path: str                    # Original media path (location, may dangle; identity is the hash)
     title: Optional[str] = None  # Display title; None = path stem
@@ -179,6 +181,7 @@ class AudioSegmentNode:
     content hash); the structural chain to the Source rides the PART_OF edge +
     the start/end properties. `segment_path` (the source-codec cut) stays here as
     a rendition-independent archival pointer."""
+
     source: str                       # Owning Source node id
     index: int                        # Position in the coarse spine (0-based)
     start: float                      # Boundary start (source-coordinate seconds)
@@ -222,6 +225,7 @@ class AudioRenditionNode:
     nodes. Connects UP to its AudioSegment by DERIVED_FROM (it is derived from the
     segment's audio); the production act is recorded separately by a CR-18
     `Derivation` event."""
+
     audio_segment: str                # Owning AudioSegment node id
     model_input_path: str             # The 16kHz mono WAV consumed by transcription/VAD/FA
     model_input_hash: str             # Content hash over that WAV (the rendition's identity-of-record artifact)
@@ -259,6 +263,7 @@ class AudioRenditionNode:
 class TranscriptNode:
     """One transcriber's text for one AudioRendition (per-transcriber variants at
     the coarse layer — cross-transcriber divergence lives here, C4/C14)."""
+
     rendition: str                # Owning AudioRendition node id
     transcriber: str              # Transcriber capability name
     config_hash: str              # Transcriber config hash
@@ -317,6 +322,7 @@ class TranscriptSliceRef:
     """One per-transcriber char-range reference for a fine Segment: where this
     segment's text lives inside a Transcript node's text (Thread-1
     slices-until-promoted — variants are slices, never duplicated fine text)."""
+
     transcript: str  # Transcript node id
     start_char: int  # Slice start into the Transcript's text
     end_char: int    # Slice end
@@ -348,6 +354,7 @@ class SegmentNode:
     `skeleton_hash` stays the live spine's, so no reader splits the spine),
     the old ones are stamped `superseded_by` (the respine op id) and leave the
     live view — readers filter `superseded_by is null`; nothing is deleted."""
+
     rendition: str            # Owning AudioRendition node id
     vad_config_hash: str      # Skeleton config hash (identity input: VAD config, + split policy when a split stage ran)
     chunk_start: float        # VAD chunk start (chunk-local seconds within the rendition WAV)
@@ -420,6 +427,7 @@ class RespinedChunkEntry:
     dependents (stranded ids on explicit say-so; carried = the corrections the
     chunk-scoped transfer re-homed by time: accepted event inserts, speaker
     assignments). The op id is what `superseded_by` on the old segments names."""
+
     audio_segment: str                                  # AudioSegment node id (the coarse chunk)
     transcript: str                                     # The landed Transcript node id (= identity_salt of the new segments)
     run: str                                            # The decomp run id the re-derivation ran under
@@ -492,6 +500,7 @@ class CollectionNode:
     rename, refile out of, or dissolve. root_kind=asserted — a collection is
     a grouping ASSERTION about ingested content, not ingested content itself.
     Collection PART_OF Collection nesting is grammar-free (no v0 tooling)."""
+
     title: str                     # Display title (identity input via normalize_collection_title)
     status: str = "proposed"       # "proposed" (tool inference) | "confirmed" (human act)
     actor: str = "human"           # Who declared it (attribution; e.g. "human", "tui:transcription", "cli:transcribe")
