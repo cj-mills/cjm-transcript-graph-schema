@@ -1,16 +1,15 @@
 """Tests for cjm_transcript_graph_schema.schema — identity tuples + wire shapes.
 
 Projected from the schema notebook's four test cells at the c25780e8 flip."""
+
 from cjm_context_graph_primitives.provenance import SourceRef
-from cjm_transcript_graph_schema.schema import (AudioRenditionNode, AudioSegmentNode,
-                                                CollectionNode, SegmentNode, SourceNode,
-                                                TranscriptNode, TranscriptSliceRef,
-                                                audio_rendition_node_id,
-                                                audio_segment_node_id,
+from cjm_transcript_graph_schema.schema import (audio_rendition_node_id, audio_segment_node_id,
+                                                AudioRenditionNode, AudioSegmentNode,
                                                 collection_edges, collection_node_id,
-                                                normalize_collection_title,
-                                                segment_node_id, source_node_id,
-                                                transcript_node_id)
+                                                CollectionNode, normalize_collection_title,
+                                                segment_node_id, SegmentNode, source_node_id,
+                                                SourceNode, transcript_node_id, TranscriptNode,
+                                                TranscriptSliceRef)
 
 SID = source_node_id("sha256:abc")
 A1 = audio_segment_node_id(SID, 0.0, 300.2)
