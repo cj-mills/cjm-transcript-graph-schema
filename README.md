@@ -6,7 +6,8 @@ Audio-transcript layer schema for context graphs: Source, AudioSegment, Transcri
 
 ## Modules
 
-- **`cjm_transcript_graph_schema.schema`** — The audio-transcript layer schema (where-graph-begins locked layer schema): Source -> AudioSegment(coarse boundary) -> AudioRendition(model-input: raw | vocals | ...) -> Transcript(per-transcriber variants) emitted by transcription, extended with the fine Segment spine (per-rendition) by decomposition. Deterministic identity tuples per the stage-5 ratified rule; the AudioRendition node lets raw + preprocessed model-inputs of one boundary coexist in one graph. Document from the pre-CR-18 era dissolves into Source.
+- **`cjm_transcript_graph_schema.__init__`**
+- **`cjm_transcript_graph_schema.schema`** — The audio-transcript layer schema (where-graph-begins locked layer schema): Source -> AudioSegment(coarse boundary) -> AudioRendition(model-input: raw | vocals | ...) -> Transcript(per-transcriber variants) emitted by transcription, extended with the fine Segment spine (per-rendition) by decomposition, and with the intrinsic Collection layer ABOVE Source (book/series/course; proposed-by-tool / confirmed-by-actor, order optional) captured at transcription hand-off. Deterministic identity tuples per the stage-5 ratified rule; the AudioRendition node lets raw + preprocessed model-inputs of one boundary coexist in one graph. Document from the pre-CR-18 era dissolves into Source.
 
 ## API
 
@@ -25,6 +26,8 @@ Audio-transcript layer schema for context graphs: Source, AudioSegment, Transcri
 - `audio_segment_node_id` _function_ — AudioSegment identity = (source, boundary range).
 - `collection_edges` _function_ — Membership edges for a collection (ae3464fc: ORDER IS OPTIONAL).
 - `collection_node_id` _function_ — Collection identity = the NORMALIZED TITLE (ratified fork, hub-session
+- `external_config_hash` _function_ — The config hash an external landing carries where a capability's effective
+- `external_transcriber_name` _function_ — Transcriber name for an EXTERNAL landing (ruling 9ffce5f7 (1)): the model id
 - `normalize_collection_title` _function_ — Normalize a collection title for identity derivation.
 - `segment_node_id` _function_ — Fine Segment identity = audio-side only (audio rendition, VAD config, chunk
 - `source_node_id` _function_ — Source identity = the ingested file's content hash (Thread-1 ingested-root identity).
@@ -33,4 +36,4 @@ Audio-transcript layer schema for context graphs: Source, AudioSegment, Transcri
 ## Dependencies
 
 **Depends on:** `cjm-context-graph-layer`, `cjm-context-graph-primitives`
-**Used by:** `cjm-context-graph-layer`, `cjm-transcript-correction-core`, `cjm-transcript-correction-tui`, `cjm-transcript-decomp-core`, `cjm-transcription-core`
+**Used by:** `cjm-context-graph-layer`, `cjm-transcript-correction-core`, `cjm-transcript-decomp-core`, `cjm-transcription-core`, `cjm-transcription-qt`, `cjm-workflow-hub-qt`
